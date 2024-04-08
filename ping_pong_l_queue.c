@@ -52,22 +52,13 @@ int main(int argc, char** argv)
   LCI_comp_t cq;
   LCI_queue_create(device, &cq);
 
-  // For medium messages (up to LCI_MEDIUM_SIZE bytes), we can use LCI_sendm(n)
-  // and LCI_recvm(n) to send and receive messages. The difference between the
-  // "copy" version (LCI_sendm/recvm) and the "no copy" version
-  // (LCI_sendmn/recvmn) is whether the send/recv buffers are provided by users
-  // or the LCI runtime. LCI_sendm can be paired with LCI_recvmn and LCI_sendmn
-  // can be paired with LCI_recvm.
+  // For long messages (> LCI_MEDIUM_SIZE bytes), we need to use LCI_sendl
+  // and LCI_recvl to send and receive messages. To use LCI_sendl and LCI_recvl,
+  // we need to register our own memory buffers.
   printf("LCI_SHORT_SIZE: %d \t LCI_MEDIUM_SIZE: %d\n", LCI_SHORT_SIZE, LCI_MEDIUM_SIZE);
-  if (msgs_size > LCI_MEDIUM_SIZE) {
-    fprintf(stderr,
-            "The message is too long to be sent/received"
-            "using LCI_sendm/LCI_recvm");
-    exit(1);
-  }
   // We are using LCI_sendm/recvm in this example, so we need to allocate our
   // own send/recv buffers
-  LCI_mbuffer_t src_buf, dst_buf;
+  LCI_lbuffer_t src_buf, dst_buf;
   src_buf.address = malloc(msgs_size);
   src_buf.length = msgs_size;
   memset(src_buf.address, 'a' + LCI_RANK, msgs_size);
@@ -94,15 +85,18 @@ int main(int argc, char** argv)
   void* user_context = (void*)9527;
   if (LCI_RANK == 0) {
     for (int i = 0; i < num_msgs; i++) {
-      // Send a medium message using LCI_sendm
+      // Send a long message using LCI_sendl
       // A LCI send function can return LCI_ERR_RETRY, so we use a while loop
       // here to make sure the message is sent
-      while (LCI_sendm(ep, src_buf, peer_rank, tag) == LCI_ERR_RETRY)
+      while (LCI_sendl(ep, src_buf, peer_rank, tag, cq, user_context) == LCI_ERR_RETRY)
         // Users have to call LCI_progress frequently to make progress on the
         // background work.
         LCI_progress(device);
-      // Recv a medium message using LCI_recvm
-      LCI_recvm(ep, dst_buf, peer_rank, tag, cq, user_context);
+      // Recv a long message using LCI_recvl
+      while (LCI_recvl(ep, dst_buf, peer_rank, tag, cq, user_context) == LCI_ERR_RETRY)
+        // Users have to call LCI_progress frequently to make progress on the
+        // background work.
+        LCI_progress(device);
 
       LCI_request_t request;
       // Try to pop a entry from the completion queue.
@@ -115,30 +109,32 @@ int main(int argc, char** argv)
       assert(request.flag == LCI_OK);
       assert(request.rank == peer_rank);
       assert(request.tag == tag);
-      assert(request.type == LCI_MEDIUM);
+      assert(request.type == LCI_LONG);
       assert(request.user_context == user_context);
-      assert(request.data.mbuffer.address == dst_buf.address);
-      assert(request.data.mbuffer.length == dst_buf.length);
+      assert(request.data.lbuffer.address == dst_buf.address);
+      assert(request.data.lbuffer.length == dst_buf.length);
       for (int j = 0; j < msgs_size; ++j) {
         assert(((char*)dst_buf.address)[j] == 'a' + peer_rank);
       }
     }
   } else {
     for (int i = 0; i < num_msgs; i++) {
-      LCI_recvm(ep, dst_buf, peer_rank, tag, cq, user_context);
+      while(LCI_recvl(ep, dst_buf, peer_rank, tag, cq, user_context) == LCI_ERR_RETRY)
+        LCI_progress(device);
       LCI_request_t request;
-      while (LCI_queue_pop(cq, &request) == LCI_ERR_RETRY) LCI_progress(device);
+      while (LCI_queue_pop(cq, &request) == LCI_ERR_RETRY)
+        LCI_progress(device);
       assert(request.flag == LCI_OK);
       assert(request.rank == peer_rank);
       assert(request.tag == tag);
-      assert(request.type == LCI_MEDIUM);
+      assert(request.type == LCI_LONG);
       assert(request.user_context == user_context);
-      assert(request.data.mbuffer.address == dst_buf.address);
-      assert(request.data.mbuffer.length == dst_buf.length);
+      assert(request.data.lbuffer.address == dst_buf.address);
+      assert(request.data.lbuffer.length == dst_buf.length);
       for (int j = 0; j < msgs_size; ++j) {
         assert(((char*)dst_buf.address)[j] == 'a' + peer_rank);
       }
-      while (LCI_sendm(ep, src_buf, peer_rank, tag) == LCI_ERR_RETRY)
+      while (LCI_sendl(ep, src_buf, peer_rank, tag, cq, user_context) == LCI_ERR_RETRY)
         LCI_progress(device);
     }
   }
