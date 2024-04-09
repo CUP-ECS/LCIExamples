@@ -10,8 +10,8 @@
 
 ## Running
 
-`mpirun -n 2 ./ping_pong_m_queue <number of ping pong iterations> <message size in bytes>`
+`mpirun -n 2 ./send_recv_s_sync`
 
 or
 
-`srun -n 2 --mpi=pmi2 ./ping_pong_m_queue <number of ping pong iterations> <message size in bytes>`
+`srun -n 2 --mpi=pmi2 ./send_recv_s_sync`
